@@ -1,0 +1,1 @@
+Fix bug where bad fNIRS channels with missing sensor positions copied data from an arbitrary channel instead of being set to NaN during :meth:`~mne.io.Raw.interpolate_bads`, by `Ishaan Maheshwari`_.

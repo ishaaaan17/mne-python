@@ -275,21 +275,36 @@ def _interpolate_bads_nirs(inst, exclude=(), verbose=None):
 
     chs = [inst.info["chs"][i] for i in picks_nirs]
     locs3d = np.array([ch["loc"][:3] for ch in chs])
+    invalid_pos = np.isnan(locs3d).any(axis=1) | np.all(
+        np.isclose(locs3d, 0.0, atol=1e-16), axis=1
+    )
 
-    dist = pdist(locs3d)
-    dist = squareform(dist)
+    dist = squareform(pdist(locs3d))
 
     for bad_raw_idx in picks_bad:
         # `bad_raw_idx` is the index of the bad channel in `inst`
         # `bad_dist_idx` is the index of the bad channel in `dist`
         bad_dist_idx = np.where(picks_nirs == bad_raw_idx)[0][0]
+        if invalid_pos[bad_dist_idx]:
+            inst._data[..., bad_raw_idx, :] = np.nan
+            continue
         dists_to_bad = dist[bad_dist_idx].copy()
-        # Ignore distances to self
+        # Ignore distances to self and identical positions
         dists_to_bad[dists_to_bad == 0] = np.inf
         # Ignore distances to other bad channels
         dists_to_bad[bads_mask] = np.inf
+        # Ignore channels without valid positions
+        dists_to_bad[invalid_pos] = np.inf
+        dists_to_bad[np.isnan(dists_to_bad)] = np.inf
         # Find closest remaining channels for same frequency
-        closest_dist_idx = np.argmin(dists_to_bad) + (bad_dist_idx % 2)
+        same_freq = (np.arange(len(picks_nirs)) % 2) == (bad_dist_idx % 2)
+        dists_to_bad[~same_freq] = np.inf
+        if np.isinf(dists_to_bad).all():
+            raise ValueError(
+                f"No good fNIRS channel with valid position found to interpolate "
+                f"channel {inst.info['ch_names'][bad_raw_idx]}."
+            )
+        closest_dist_idx = np.argmin(dists_to_bad)
         closest_raw_idx = picks_nirs[closest_dist_idx]
         inst._data[..., bad_raw_idx, :] = inst._data[..., closest_raw_idx, :]
 

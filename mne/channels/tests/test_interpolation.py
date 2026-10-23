@@ -401,6 +401,45 @@ def test_interpolation_nirs_epochs():
     _assert_nirs_donor(epochs)
 
 
+def test_interpolation_nirs_invalid_positions():
+    """Test fNIRS interpolation when channels have invalid positions."""
+    # 1. Bad channels without positions (NaN or zero) become NaN
+    for invalid_val in (np.nan, 0.0):
+        raw = _nirs_raw()
+        for ch in ("S3_D3 760", "S3_D3 850"):
+            raw.info["chs"][raw.ch_names.index(ch)]["loc"][:3] = invalid_val
+        raw.info["bads"] = ["S3_D3 760", "S3_D3 850"]
+        with pytest.warns(RuntimeWarning, match="invalid sensor position"):
+            raw.interpolate_bads(origin=(0.0, 0.0, 0.0))
+        picks_bad = [raw.ch_names.index(ch) for ch in ("S3_D3 760", "S3_D3 850")]
+        assert np.isnan(raw.get_data(picks=picks_bad)).all()
+
+    # 2. Good channels with invalid positions are skipped as donors
+    raw = _nirs_raw()
+    for ch in ("S1_D1 760", "S1_D1 850"):
+        raw.info["chs"][raw.ch_names.index(ch)]["loc"][:3] = np.nan
+    raw.info["bads"] = ["S2_D2 760", "S2_D2 850"]
+    raw.interpolate_bads(origin=(0.0, 0.0, 0.0))
+    picks_bad = [raw.ch_names.index(ch) for ch in ("S2_D2 760", "S2_D2 850")]
+    picks_want = [raw.ch_names.index(ch) for ch in ("S3_D3 760", "S3_D3 850")]
+    assert_allclose(raw.get_data(picks=picks_bad), raw.get_data(picks=picks_want))
+
+    # 3. ValueError when no good candidate donor channel is available
+    raw = _nirs_raw()
+    raw.info["bads"] = [
+        "S2_D2 760",
+        "S2_D2 850",
+        "S3_D3 760",
+        "S3_D3 850",
+        "S10_D10 760",
+        "S10_D10 850",
+    ]
+    for ch in ("S1_D1 760", "S1_D1 850"):
+        raw.info["chs"][raw.ch_names.index(ch)]["loc"][:3] = np.nan
+    with pytest.raises(ValueError, match="No good fNIRS channel with valid position"):
+        raw.interpolate_bads(origin=(0.0, 0.0, 0.0), on_bad_position="ignore")
+
+
 @testing.requires_testing_data
 def test_interpolation_ecog():
     """Test interpolation for ECoG."""
