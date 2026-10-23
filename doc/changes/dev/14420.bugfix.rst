@@ -1,0 +1,1 @@
+Fix bug where changing digitized points in :class:`~mne.coreg.Coregistration` via :meth:`~mne.coreg.Coregistration.set_info` did not reset the omitted head shape points mask, causing an :exc:`IndexError` during subsequent fits, by `Ishaan Maheshwari`_.

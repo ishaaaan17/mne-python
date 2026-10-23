@@ -532,6 +532,16 @@ def test_coreg_fitting_invariants():
         assert len(kept) <= prev_n_kept
         prev_n_kept = len(kept)
 
+    # Ensure set_info resets _extra_points_filter (#14420)
+    assert coreg._extra_points_filter is not None
+    info2 = info.copy()
+    with info2._unlock():
+        info2["dig"] = [d for d in info["dig"] if d["kind"] != FIFF.FIFFV_POINT_EXTRA]
+    coreg.set_info(info2)
+    assert coreg._extra_points_filter is None
+    coreg.fit_fiducials()
+    coreg.set_info(info)
+
     # fit_fiducials / fit_icp
     for _ in range(5):
         coreg.reset()
