@@ -6418,12 +6418,19 @@ def _concatenate_epochs(
     epochs_list, *, with_data=True, add_offset=True, on_mismatch="raise"
 ):
     """Auxiliary function for concatenating epochs."""
+    from .time_frequency.tfr import EpochsTFR
+
     if not isinstance(epochs_list, list | tuple):
         raise TypeError(f"epochs_list must be a list or tuple, got {type(epochs_list)}")
 
     out = epochs_list[0]
-    spectrum = isinstance(out, EpochsSpectrum)
-    expected = EpochsSpectrum if spectrum else BaseEpochs
+    if isinstance(out, EpochsTFR):
+        expected = EpochsTFR
+    elif isinstance(out, EpochsSpectrum):
+        expected = EpochsSpectrum
+    else:
+        expected = BaseEpochs
+    spectral = expected is not BaseEpochs
     # to make warning messages only occur once during concatenation
     warned = False
 
@@ -6432,7 +6439,7 @@ def _concatenate_epochs(
             epochs,
             expected,
             f"epochs_list[{ei}]",
-            "EpochsSpectrum" if spectrum else "Epochs",
+            expected.__name__ if spectral else "Epochs",
         )
 
         if (
@@ -6451,14 +6458,14 @@ def _concatenate_epochs(
             epochs = epochs.copy()
             epochs.set_annotations(None)
     offsets = [0]
-    if with_data and not spectrum:
+    if with_data and not spectral:
         out.drop_bad()
         offsets.append(len(out))
     events = [out.events]
     metadata = [out.metadata]
-    if spectrum:
+    if spectral:
         baseline = tmin = tmax = raw_sfreq = None
-        shift = len(out.freqs)
+        shift = len(out.times) if isinstance(out, EpochsTFR) else len(out.freqs)
     else:
         baseline, tmin, tmax = out.baseline, out.tmin, out.tmax
         raw_sfreq = out._raw_sfreq
@@ -6477,7 +6484,7 @@ def _concatenate_epochs(
     warned = False
     for ii, epochs in enumerate(epochs_list[1:], 1):
         _ensure_infos_match(epochs.info, info, f"epochs[{ii}]", on_mismatch=on_mismatch)
-        if spectrum:
+        if spectral:
             if not np.array_equal(epochs.freqs, out.freqs):
                 raise ValueError("Spectra must have the same frequencies")
             if epochs.method != out.method:
@@ -6490,13 +6497,13 @@ def _concatenate_epochs(
                 raise ValueError("Spectrum dimensions, type and weights must match")
             if (epochs.events is None) != (out.events is None):
                 raise ValueError("Either all or none of the spectra must have events")
-        elif not np.allclose(epochs.times, out.times):
+        if expected is not EpochsSpectrum and not np.allclose(epochs.times, out.times):
             raise ValueError("Epochs must have same times")
 
-        if not spectrum and epochs.baseline != baseline:
+        if expected is not EpochsSpectrum and epochs.baseline != out.baseline:
             raise ValueError("Baseline must be same for all epochs")
 
-        if not spectrum and epochs._raw_sfreq != raw_sfreq and not warned:
+        if not spectral and epochs._raw_sfreq != raw_sfreq and not warned:
             warned = True
             warn(
                 "The original raw sampling rate of the Epochs does not "
@@ -6525,11 +6532,11 @@ def _concatenate_epochs(
                         f"in epochs_list[0] and to {b[k_v]} in epochs_list[{ii}]."
                     )
 
-        if with_data and not spectrum:
+        if with_data and not spectral:
             epochs.drop_bad()
             offsets.append(len(epochs))
         selection = np.concatenate(
-            (selection, epochs.selection + (len(drop_log) if spectrum else 0))
+            (selection, epochs.selection + (len(drop_log) if spectral else 0))
         )
         drop_log = drop_log + epochs.drop_log
         event_id.update(epochs.event_id or {})
@@ -6575,7 +6582,7 @@ def _concatenate_epochs(
         else:  # dict of dicts
             metadata = sum(metadata, list())
     data = None
-    if spectrum:
+    if spectral:
         data = np.concatenate([epochs.data for epochs in epochs_list])
     elif with_data:
         offsets = np.cumsum(offsets)
@@ -6609,8 +6616,8 @@ def concatenate_epochs(
     *,
     on_mismatch: Literal["raise", "warn", "ignore"] = "raise",
     verbose: bool | str | int | None = None,
-) -> EpochsArray | EpochsSpectrum:
-    """Concatenate epochs or epoched spectra along the epoch dimension.
+) -> "EpochsArray | EpochsSpectrum | EpochsTFR":
+    """Concatenate epochs, epoched spectra, or epoched time-frequency data.
 
     .. note:: Unlike `~mne.concatenate_raws`, this function does **not**
               modify any of the input data.
@@ -6618,8 +6625,8 @@ def concatenate_epochs(
     Parameters
     ----------
     epochs_list : list
-        List of `~mne.Epochs` or `~mne.time_frequency.EpochsSpectrum` instances
-        of the same kind to concatenate in order.
+        List of `~mne.Epochs`, `~mne.time_frequency.EpochsSpectrum`, or
+        `~mne.time_frequency.EpochsTFR` instances of the same kind, in order.
     add_offset : bool
         If True, a fixed offset is added to the event times from different
         Epochs sets, such that they are easy to distinguish after the
@@ -6642,7 +6649,7 @@ def concatenate_epochs(
 
     Returns
     -------
-    epochs : instance of EpochsArray or EpochsSpectrum
+    epochs : instance of EpochsArray, EpochsSpectrum, or EpochsTFR
         The result of the concatenation. All data will be loaded into memory.
 
     Notes
@@ -6667,7 +6674,7 @@ def concatenate_epochs(
         add_offset=add_offset,
         on_mismatch=on_mismatch,
     )
-    if isinstance(epochs_list[0], EpochsSpectrum):
+    if not isinstance(epochs_list[0], BaseEpochs):
         first = epochs_list[0]
         # Reuse the concatenated data and copied info when copying spectral attributes.
         out = deepcopy(first, {id(first.data): data, id(first.info): info})
